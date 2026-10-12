@@ -145,6 +145,53 @@ pub struct Studio {
     #[serde(default)]
     pub up_close_danmu: bool,
 
+    /// 4:3 版封面，web 投稿双封面（2026-10 创作中心抓包新增）
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover43: Option<String>,
+
+    /// 创作声明（web 端 creation_statement，如 {"id":-1} 表示不声明）
+    #[cfg_attr(feature = "cli", clap(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_statement: Option<Value>,
+
+    /// 一创/二创标注（web 端 recreate，-1 为未标注）
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recreate: Option<i32>,
+
+    /// 人类验证类型（web 端 human_type2）
+    #[cfg_attr(feature = "cli", clap(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_type2: Option<u8>,
+
+    /// 投稿水印（web 端 watermark，如 {"state":1} 开启、{"state":0} 关闭）
+    #[cfg_attr(feature = "cli", clap(long, value_parser = parse_json_value))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<Value>,
+
+    /// 在个人空间-投稿中隐藏（web 端 space_hidden，2=正常显示）
+    #[cfg_attr(feature = "cli", clap(long))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_hidden: Option<u8>,
+
+    /// 全景视频（web 端 is_360，-1=非全景）
+    #[cfg_attr(feature = "cli", clap(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_360: Option<i8>,
+
+    /// web 端来源标识（web 端 web_os，取值 2）
+    #[cfg_attr(feature = "cli", clap(skip))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_os: Option<u8>,
+
+    /// 卡片与分段章节数据（web 端 cardList：互动引导/关联视频/投票弹幕/分段章节）。
+    /// 随投稿 body 一次性提交，发布后不可二次配置，只能在投稿时携带。
+    /// JSON 格式，如 {"chapters":[{"title":"开场","from":0,"to":30}]}
+    #[cfg_attr(feature = "cli", clap(long, value_parser = parse_json_value))]
+    #[serde(rename = "cardList", default, skip_serializing_if = "Option::is_none")]
+    pub card_list: Option<Value>,
+
     /// 自定义提交参数
     #[cfg_attr(feature = "cli", clap(long, value_parser = parse_extra_fields))]
     #[serde(flatten)]
@@ -152,6 +199,10 @@ pub struct Studio {
 }
 
 fn parse_extra_fields(s: &str) -> std::result::Result<HashMap<String, Value>, String> {
+    serde_json::from_str(s).map_err(|e| e.to_string())
+}
+
+fn parse_json_value(s: &str) -> std::result::Result<Value, String> {
     serde_json::from_str(s).map_err(|e| e.to_string())
 }
 
@@ -834,6 +885,296 @@ impl BiliBili {
         Err(Kind::Custom(result.message))
     }
 
+    /// ========= 以下接口来自 2026-10 创作中心前端抓包（tools/bilibili_web_submit_api.md）=========
+    ///
+    /// 投稿预检：发布前校验标题/封面/分区等，query 为原始查询串（如 `title=xx&cover=xx`）。
+    pub async fn archive_precheck(&self, query: &str) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/vupre/web/archive/precheck?{query}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 创作声明类型列表（一创声明等可选 id）。
+    pub async fn human_type2_list(&self) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get("https://member.bilibili.com/x/vupre/web/archive/human/type2/list")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 草稿列表（创作中心网页版草稿箱）。
+    pub async fn draft_list(&self, pn: u32, ps: u32) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/vupre/web/draft/list?pn={pn}&ps={ps}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 查看草稿详情。
+    pub async fn draft_view(&self, draft_id: u64) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/vupre/web/draft/view?draft_id={draft_id}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 新增草稿，content 为草稿表单内容（与网页端存草稿的 body 一致）。
+    pub async fn draft_add(&self, content: &Value) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/draft/add?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(content)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 更新草稿。
+    pub async fn draft_update(&self, draft_id: u64, content: &Value) -> Result<Value> {
+        let mut body = content.clone();
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("draft_id".into(), json!(draft_id));
+        }
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/draft/update?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(&body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 删除草稿。
+    pub async fn draft_delete(&self, draft_id: u64) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/draft/delete?csrf={}",
+                self.get_csrf()?
+            ))
+            .form(&json!({ "draft_id": draft_id }))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 投稿模板列表（网页端"存为模板"）。
+    pub async fn submission_templates(&self) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get("https://member.bilibili.com/x/vupre/web/tpls")
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 新增投稿模板，content 为模板内容。
+    pub async fn tpl_add(&self, content: &Value) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/tpl/add?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(content)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 更新投稿模板，content 需含模板 id 与完整内容。
+    pub async fn tpl_update(&self, content: &Value) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/tpl/update?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(content)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 删除投稿模板。
+    pub async fn tpl_delete(&self, tpl_id: u64) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/tpl/delete?csrf={}",
+                self.get_csrf()?
+            ))
+            .form(&json!({ "tpl_id": tpl_id }))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 创建 AI 封面任务（网页端"AI 助手"生成封面），body 与网页端一致。
+    pub async fn aicover_task_create(&self, body: &Value) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/archive/aicover/taskcreate?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 启动 AI 封面任务。
+    pub async fn aicover_task_start(&self, body: &Value) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .post(format!(
+                "https://member.bilibili.com/x/vupre/web/archive/aicover/taskstart?csrf={}",
+                self.get_csrf()?
+            ))
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 查询 AI 封面任务状态，query 为原始查询串。
+    pub async fn aicover_task_query(&self, query: &str) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/vupre/web/archive/aicover/taskquery?{query}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 联合投稿合作者搜索（按用户名模糊搜索）。
+    pub async fn staff_user_search(&self, name: &str) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/web/staff/user/search?name={name}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
+    /// 花火商单列表（商业推广稿件关联），query 为原始查询串。
+    pub async fn adorder_list(&self, query: &str) -> Result<Value> {
+        let result: ResponseData = self
+            .client
+            .get(format!(
+                "https://member.bilibili.com/x/vupre/web/archive/adorder/list?{query}"
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        if result.code == 0 {
+            return Ok(result.data.unwrap_or_default());
+        }
+        Err(Kind::Custom(result.message))
+    }
+
     pub(crate) fn get_csrf(&self) -> Result<&str> {
         let csrf = self
             .login_info
@@ -1168,38 +1509,72 @@ mod studio_tid_v2_tests {
     fn studio_tid_v2_does_not_conflict_with_extra_fields() {
         let mut raw = base_studio_json();
         raw["tid_v2"] = serde_json::json!(2102);
-        raw["watermark"] = serde_json::json!({"state": 0});
+        // 未定义字段的 flatten 透传依旧可用（watermark/creation_statement 已升级为一等字段）
+        raw["topic_id"] = serde_json::json!(123);
         let studio: Studio = serde_json::from_value(raw).unwrap();
         assert_eq!(studio.tid_v2, Some(2102));
         let value = serde_json::to_value(&studio).unwrap();
         assert_eq!(value["tid_v2"], 2102);
-        assert_eq!(value["watermark"]["state"], 0);
+        assert_eq!(value["topic_id"], 123);
         assert_eq!(
             studio
                 .extra_fields
                 .as_ref()
                 .unwrap()
-                .get("watermark")
-                .unwrap()["state"],
-            0
+                .get("topic_id")
+                .unwrap(),
+            123
         );
+    }
 
-        // Prefer first-class field when present; unrelated flatten keys still work.
-        let via_extra: Studio = serde_json::from_value(serde_json::json!({
-            "tid": 95,
-            "title": "t",
-            "watermark": {"state": 0}
-        }))
-        .unwrap();
-        assert!(via_extra.tid_v2.is_none());
-        assert_eq!(
-            via_extra
+    #[test]
+    fn studio_captured_fields_roundtrip() {
+        let mut raw = base_studio_json();
+        raw["cardList"] = serde_json::json!({"chapters":[{"title":"开场","from":0,"to":30}]});
+        raw["watermark"] = serde_json::json!({"state": 1});
+        raw["creation_statement"] = serde_json::json!({"id": -1});
+        raw["space_hidden"] = serde_json::json!(2);
+        raw["cover43"] = serde_json::json!("https://i0.hdslb.com/43.jpg");
+        raw["recreate"] = serde_json::json!(-1);
+        raw["web_os"] = serde_json::json!(2);
+        let studio: Studio = serde_json::from_value(raw).unwrap();
+        assert_eq!(studio.space_hidden, Some(2));
+        assert_eq!(studio.recreate, Some(-1));
+        let value = serde_json::to_value(&studio).unwrap();
+        assert_eq!(value["cardList"]["chapters"][0]["title"], "开场");
+        assert_eq!(value["watermark"]["state"], 1);
+        assert_eq!(value["creation_statement"]["id"], -1);
+        assert_eq!(value["cover43"], "https://i0.hdslb.com/43.jpg");
+        assert_eq!(value["web_os"], 2);
+        // 一等字段接管后，不再落入 extra_fields
+        assert!(
+            studio
                 .extra_fields
                 .as_ref()
-                .unwrap()
-                .get("watermark")
-                .unwrap()["state"],
-            0
+                .map(|extra| !extra.contains_key("watermark"))
+                .unwrap_or(true)
         );
+    }
+
+    #[test]
+    fn studio_captured_fields_omitted_when_unset() {
+        let studio: Studio = serde_json::from_value(base_studio_json()).unwrap();
+        let value = serde_json::to_value(&studio).unwrap();
+        for key in [
+            "cardList",
+            "watermark",
+            "creation_statement",
+            "space_hidden",
+            "cover43",
+            "recreate",
+            "human_type2",
+            "is_360",
+            "web_os",
+        ] {
+            assert!(
+                value.get(key).is_none(),
+                "unset {key} must not appear: {value}"
+            );
+        }
     }
 }

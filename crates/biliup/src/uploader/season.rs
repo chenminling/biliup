@@ -312,6 +312,71 @@ impl SeasonApi<'_> {
         Ok(())
     }
 
+    /// 新建合集（2026-10 创作中心抓包端点 `POST /x2/creative/web/season/add`）。
+    /// body 为合集属性（title 必填，可选 intro/cover 等字段，与网页端一致）。
+    pub async fn create_season(&self, body: &serde_json::Value) -> Result<()> {
+        let csrf = self.bili.get_csrf()?;
+        let mut payload = body.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("csrf".into(), serde_json::json!(csrf));
+        }
+        let request = self
+            .bili
+            .client
+            .post(format!("{}/x2/creative/web/season/add", self.member))
+            .query(&[("csrf", csrf)])
+            .json(&payload);
+        call(request, TIMEOUT, "create season").await?;
+        Ok(())
+    }
+
+    /// 查询稿件所属合集（抓包端点 `GET /x2/creative/web/season/aid`）。
+    pub async fn seasons_by_archive(&self, aid: u64) -> Result<serde_json::Value> {
+        let request = self
+            .bili
+            .client
+            .get(format!("{}/x2/creative/web/season/aid", self.member))
+            .query(&[("aid", aid.to_string())]);
+        call(request, TIMEOUT, "get seasons by archive").await
+    }
+
+    /// 开关合集功能（抓包端点 `POST /x2/creative/web/season/switch`），开关状态由 body 指定。
+    pub async fn switch_season(&self, body: &serde_json::Value) -> Result<()> {
+        let csrf = self.bili.get_csrf()?;
+        let mut payload = body.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("csrf".into(), serde_json::json!(csrf));
+        }
+        let request = self
+            .bili
+            .client
+            .post(format!("{}/x2/creative/web/season/switch", self.member))
+            .query(&[("csrf", csrf)])
+            .json(&payload);
+        call(request, TIMEOUT, "switch season").await?;
+        Ok(())
+    }
+
+    /// 封禁/恢复合集（抓包端点 `POST /x2/creative/web/season/switch/forbid`）。
+    pub async fn switch_season_forbid(&self, body: &serde_json::Value) -> Result<()> {
+        let csrf = self.bili.get_csrf()?;
+        let mut payload = body.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("csrf".into(), serde_json::json!(csrf));
+        }
+        let request = self
+            .bili
+            .client
+            .post(format!(
+                "{}/x2/creative/web/season/switch/forbid",
+                self.member
+            ))
+            .query(&[("csrf", csrf)])
+            .json(&payload);
+        call(request, TIMEOUT, "switch season forbid").await?;
+        Ok(())
+    }
+
     pub async fn sort_season_episodes(
         &self,
         section_id: u64,
